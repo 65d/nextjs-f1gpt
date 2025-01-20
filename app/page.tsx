@@ -3,6 +3,7 @@ import Image from "next/image"
 import f1gptlogo from "./assets/f1gptlogo.webp"
 import { useChat } from "ai/react"
 import { Message } from "ai"
+import {Prompt} from "next/dist/compiled/@next/font/dist/google";
 import PromptSuggestionsRow from "./components/PromptSuggestionsRow";
 import LoadingBubble from "./components/LoadingBubble";
 import Bubble from "@/app/components/Bubble";
@@ -10,7 +11,7 @@ import Bubble from "@/app/components/Bubble";
 const Home = () => {
     const { input, handleInputChange, handleSubmit, isLoading, messages, append } = useChat()
     const noMessages = !messages || messages.length === 0;
-    const handlePrompt = ( promptText ) => {
+    const handlePrompt = ( promptText: string ) => {
         const msg: Message = {
             id: crypto.randomUUID(),
             content: promptText,

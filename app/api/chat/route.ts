@@ -1,53 +1,72 @@
-import OpenAI from "openai"
+import OpenAI from "openai";
 
-import {OpenAIStream, StreamingTextResponse} from "ai"
+import { OpenAIStream, StreamingTextResponse } from "ai";
 
 import { DataAPIClient } from "@datastax/astra-db-ts";
 
-const { ASTRA_DB_NAMESPACE, ASTRA_DB_COLLECTION, ASTRA_DB_API_ENDPOINT, ASTRA_DB_APPLICATION_TOKEN, OPENAI_API_KEY } = process.env
+const {
+  ASTRA_DB_NAMESPACE,
+  ASTRA_DB_COLLECTION,
+  ASTRA_DB_API_ENDPOINT,
+  ASTRA_DB_APPLICATION_TOKEN,
+  OPENAI_API_KEY,
+} = process.env;
+
+if (
+  !ASTRA_DB_NAMESPACE ||
+  !ASTRA_DB_COLLECTION ||
+  !ASTRA_DB_API_ENDPOINT ||
+  !ASTRA_DB_APPLICATION_TOKEN ||
+  !OPENAI_API_KEY
+)
+  throw new Error("Please set all required environment variables.");
 
 const openai = new OpenAI({
-    apiKey: OPENAI_API_KEY
-})
+  apiKey: OPENAI_API_KEY,
+});
 
-const client = new DataAPIClient(ASTRA_DB_APPLICATION_TOKEN)
+const client = new DataAPIClient(ASTRA_DB_APPLICATION_TOKEN);
 
-const db = client.db(ASTRA_DB_API_ENDPOINT, { namespace: ASTRA_DB_NAMESPACE})
+const db = client.db(ASTRA_DB_API_ENDPOINT, { namespace: ASTRA_DB_NAMESPACE });
 
 export async function POST(req: Request) {
+  try {
+    const { messages } = await req.json();
+    const latestMessage = messages[messages.length - 1]?.content;
+
+    let docContext = "";
+
+    const embedding = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: latestMessage,
+      encoding_format: "float",
+    });
+
     try {
-        const {messages} = await req.json()
-        const latestMessage = messages[messages.length - 1]?.content
+      if (!ASTRA_DB_COLLECTION) return "No collection";
+      const collection = db.collection(ASTRA_DB_COLLECTION); //await
+      const cursor = collection.find(
+        {},
+        {
+          sort: {
+            $vector: embedding.data[0].embedding,
+          },
+          limit: 10,
+        },
+      );
 
-        let docContext = ""
+      const documents = await cursor.toArray();
 
-        const embedding = await openai.embeddings.create({
-            model: "text-embedding-3-small",
-            input: latestMessage,
-            encoding_format: "float"
-        })
+      const docsMap = documents?.map((doc) => doc.text);
+      docContext = JSON.stringify(docsMap);
+      // const
+    } catch (e) {
+      console.log("Error querying db:", e);
+    }
 
-        try {
-            const collection = await db.collection(ASTRA_DB_COLLECTION)
-            const cursor = collection.find(null, {
-                sort: {
-                    $vector: embedding.data[0].embedding
-                },
-                limit: 10
-            })
-
-            const documents = await cursor.toArray()
-
-            const docsMap = documents?.map(doc => doc.text)
-            docContext = JSON.stringify(docsMap)
-            // const
-        } catch (e) {
-            console.log("Error querying db:", e)
-        }
-
-        const template = {
-            role: "system",
-            content: `
+    const template = {
+      role: "system",
+      content: `
                 You are an AI assistant who knows everything about Formula One.
                 Use the below context to augment what you know about Formula One racing.
                 The context will provide you with the most recent page data from wikipedia, the official F1 website and others.
@@ -60,20 +79,18 @@ export async function POST(req: Request) {
                 ----------------
                 QUESTION: ${latestMessage}
                 ----------------
-            `
-        }
+            `,
+    };
 
-        const response = await openai.chat.completions.create({
-            model: "gpt-4",
-            stream: true,
-            messages: [template, ...messages],
-        })
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      stream: true,
+      messages: [template, ...messages],
+    });
 
-        const stream = OpenAIStream(response)
-        return new StreamingTextResponse(stream)
-
-
-    } catch (e) {
-        throw e
-    }
+    const stream = OpenAIStream(response);
+    return new StreamingTextResponse(stream);
+  } catch (e) {
+    throw e;
+  }
 }
